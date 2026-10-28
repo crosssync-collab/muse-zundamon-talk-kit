@@ -1,0 +1,13 @@
+{
+  "architecture": "待機ページ（Chromeで開く）方式。ページはGoogleスプレッドシートの状態セルを約3秒おきに読み（gviz JSONP）、seqが増えたらslugに対応するサンプルを再生する。Claudeは返信時にpush.shでシートへseq+slugを書き込む。書き込みに約14〜18秒かかるため、鳴るまで15〜20秒ほど遅れることがある（v1の制約）。",
+  "enabled": true,
+  "note": "example: replace sheet_id with your own state spreadsheet id",
+  "push_script": "~/workspace/zundamon-speaker/push.sh <slug>",
+  "rule": "ONの間は返信の趣旨に合うフレーズを1つ選び、push.shで合図を送る。チャットへの音声添付はしない（Iru訂正済み）。「ずんだオフ」への返信はテキストのみ。",
+  "samples_dir": "~/workspace/your_files/zundamon-talk-prototype/samples-voicevox/",
+  "sheet_id": "YOUR_SHEET_ID",
+  "standby_page": "~/workspace/your_files/zundamon-talk-prototype/zundamon-standby.html",
+  "trigger_off": "ずんだオフ",
+  "trigger_on": "ずんだオン",
+  "updated_at": "2026-10-28"
+}
