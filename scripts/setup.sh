@@ -6,6 +6,7 @@ PARENT="${1:?usage: setup.sh <install_parent_dir>}"
 PKG="voicevox_engine-linux-cpu-x64-0.26.0.7z.001"
 URL="https://github.com/VOICEVOX/voicevox_engine/releases/download/0.26.0/$PKG"
 EXPECTED_SIZE=1848012250
+EXPECTED_SHA256=3a74cf1bdef6b415f2acf7501f50b43e8d1ebcff85b923f693a7c4a60734d943
 mkdir -p "$PARENT"
 cd "$PARENT"
 if [ ! -f "$PKG" ]; then
@@ -16,6 +17,10 @@ SIZE=$(stat -c %s "$PKG")
 if [ "$SIZE" != "$EXPECTED_SIZE" ]; then
   echo "ERROR: unexpected package size: $SIZE (expected $EXPECTED_SIZE)" >&2
   exit 1
+fi
+if command -v sha256sum > /dev/null; then
+  echo "$EXPECTED_SHA256  $PKG" | sha256sum -c - > /dev/null || { echo "ERROR: sha256 mismatch for $PKG" >&2; exit 1; }
+  echo "sha256 verified"
 fi
 if [ ! -d linux-cpu-x64 ]; then
   mkdir -p linux-cpu-x64
