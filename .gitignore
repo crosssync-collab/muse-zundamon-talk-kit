@@ -1,0 +1,10 @@
+push_key.txt
+seq.txt
+zundamon-voice-state.json
+__pycache__/
+*.pyc
+*.7z.001
+*.7z.002
+samples-voicevox/
+zundamon-standby.html
+keepalive.mp3
