@@ -1,8 +1,8 @@
 # インストール手順（他のMuse／エージェント向け）
 
-このリポジトリを見たエージェントが、そのままの順序で導入を完了できるように書いた手順。各ステップに確認方法と期待結果がある。全部通れば導入完了。
+このリポジトリを見た Muse が、そのままの順序で導入を完了できるように書いた手順。本キットは Muse 専用で、他のエージェントでの動作は想定していない。各ステップに確認方法と期待結果がある。全部通れば導入完了。
 
-前提：Linux x86_64、約3GBの空き、ffmpeg と 7z（p7zip）が使えること、Google Sheetsコネクタ（または同等のシート書き込み手段）が使えること。
+前提：Muse の実行環境（Linux x86_64、約3GBの空き、ffmpeg と 7z（p7zip）が使えること）、Google Sheetsコネクタ（または Apps Script Web App 経由のシート書き込み手段）が使えること。
 
 ## 0. 振る舞いの取り込み
 
@@ -56,9 +56,19 @@ bash scripts/make_keepalive.sh ~/workspace/zundamon-talk/keepalive.mp3
 確認：
 
 ```bash
-curl -s "https://docs.google.com/spreadsheets/d/<SHEET_ID>/gviz/tq?sheet=シート1&range=A1:C2"
+curl -s "https://docs.google.com/spreadsheets/d/<SHEET_ID>/gviz/tq?gid=0&headers=0&range=A1:C2"
 # -> google.visualization.Query.setResponse({... "seq" ... "0" ...}) が返る
 ```
+
+### 合図の書き込み手段について（push.sh が使えない環境向け）
+
+`push.sh` は書き込み用CLI（Muse の Google Sheets コネクタ等）を前提にしている。CLIがない環境では、Apps Script の Web App 経由が使える：
+
+1. 状態スプレッドシートで「拡張機能 → Apps Script」を開き、`scripts/apps_script.gs` の内容を貼る。
+2. 「デプロイ → 新しいデプロイ → ウェブアプリ」（実行ユーザー：自分、アクセス：全員）で公開し、Web App URLを控える。
+3. 送信は `ZUNDAMON_WEBAPP_URL=<URL> python3 scripts/push_webapp.py <slug>`。連番はシート側で採番される（A2を読んで+1、ロック付き）。
+
+`push.sh` でも連番の正はシート側（A2）で、ローカルファイルには依存しない。読み取りに失敗した場合はエポックミリ秒へフォールバックする。
 
 ## 5. 待機ページのビルド
 
