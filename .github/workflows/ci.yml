@@ -1,0 +1,25 @@
+name: kit-checks
+on: [push, pull_request]
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Shell syntax
+        run: bash -n scripts/push.sh scripts/setup.sh scripts/make_keepalive.sh
+      - name: Python compile
+        run: python3 -m py_compile scripts/server.py scripts/push_webapp.py scripts/build_standby.py scripts/synthesize_samples.py
+      - name: JSON validity
+        run: python3 -c "import json; json.load(open('zundamon-voice-state.example.json')); json.load(open('samples/manifest.json'))"
+      - name: Template placeholders intact
+        run: |
+          grep -q "__SHEET_ID__" page/standby_template.html
+          grep -q "__SAMPLES_JSON__" page/standby_template.html
+          grep -q "__SAMPLES_JSON__" page/standby_sse_template.html
+          grep -q "gid=0&headers=0" page/standby_template.html
+      - name: No private names in public files
+        run: |
+          ! grep -rn "モコ太郎" --exclude-dir=.git . || exit 1
