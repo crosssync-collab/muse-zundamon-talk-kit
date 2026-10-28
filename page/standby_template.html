@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ずんだもん待機ページ</title>
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:system-ui,sans-serif;background:#f3f8f0;color:#22301f}
+.wrap{max-width:640px;margin:0 auto;padding:20px 16px 44px}
+.card{background:#fff;border:1px solid #d9e6d2;border-radius:16px;padding:16px;margin-top:14px}
+.sub{color:#5a6b55;font-size:13px;line-height:1.7}
+button{font:inherit;border:0;border-radius:999px;padding:12px 14px;cursor:pointer;background:#e7f2df;color:#22301f}
+button:active{transform:scale(.98)}
+.primary{background:#67b34a;color:#fff;font-weight:800;font-size:17px;width:100%;padding:16px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.grid button{font-size:14px;padding:12px 6px}
+.playing{outline:3px solid #67b34a}
+h2{font-size:16px;margin:18px 0 10px}
+#now{font-weight:800;font-size:17px}
+#log{font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-all}
+.lamp{display:inline-block;width:12px;height:12px;border-radius:50%;background:#c0392b;vertical-align:middle;margin-right:6px}
+.lamp.on{background:#67b34a}
+</style></head><body><div class="wrap">
+<h1 style="font-size:22px">ずんだもん待機ページ</h1>
+<p class="sub">声は本物のVOICEVOX ずんだもん（ノーマル）なのだ。クレジット：VOICEVOX:ずんだもん。</p>
+<p class="sub" style="color:#a33;font-weight:700">大事なのだ：このページをMuseアプリの中で開くと、チャットに戻った時にページが消えて声が出ないのだ。ダウンロードして、本物のChromeで開くのが正解なのだ。</p><p class="sub" id="uaWarn" style="color:#a33;font-weight:700"></p>
+<div class="card">
+<p style="margin:0 0 10px"><span class="lamp" id="lamp"></span><span id="conn">接続中…</span></p>
+<button class="primary" id="enableBtn">音を有効にする（最初に1回だけタップ）</button>
+<p class="sub" id="status">有効化すると確認で「了解なのだ」が鳴るのだ。その後は、モコ太郎から合図が届くたびに、対応するフレーズが自動で鳴るのだ。このページは開いたまま、別アプリに切り替えて大丈夫なのだ。</p>
+<p id="now">待機中なのだ</p>
+<button id="checkBtn" style="width:100%;margin-bottom:8px">今すぐ合図を確認する</button>
+<button id="stopBtn" style="width:100%">止める</button>
+</div>
+<div id="sections"></div>
+<div class="card"><h2 style="margin-top:0">ログ</h2><div id="log"></div></div>
+<audio id="player" preload="auto"></audio>
+<audio id="keepalive" preload="auto" loop src="__KEEPALIVE__"></audio>
+<script>
+const SAMPLES = __SAMPLES_JSON__;
+const player = document.getElementById('player');
+const keep = document.getElementById('keepalive');
+const logEl = document.getElementById('log');
+const nowEl = document.getElementById('now');
+let enabled = false;
+let playing = false;
+let currentItem = null;
+let intentionalStop = false;
+const playQueue = [];
+function log(m){ const t=new Date().toLocaleTimeString('ja-JP'); logEl.textContent="["+t+"] "+m+"\n"+logEl.textContent; }
+function enqueue(slug, why){
+  if(!SAMPLES[slug]){ log("知らない合図だったのだ："+slug); return; }
+  playQueue.push({slug:slug, why:why, attempts:0});
+  pump();
+}
+function clearHighlight(){ document.querySelectorAll('button[data-key]').forEach(b=>b.classList.remove('playing')); }
+function scheduleRetry(item){
+  if(currentItem !== item) return;
+  currentItem = null; playing = false; clearHighlight();
+  item.attempts++;
+  if(item.attempts <= 4){
+    log("少し待って鳴らし直すのだ（失敗 "+item.attempts+" 回目）："+SAMPLES[item.slug].text);
+    nowEl.textContent = "割り込まれたので鳴らし直し待ちなのだ";
+    setTimeout(()=>{ playQueue.unshift(item); pump(); }, 4000);
+  } else {
+    log("4回試して鳴らせなかったので諦めたのだ："+SAMPLES[item.slug].text);
+    nowEl.textContent = "待機中なのだ";
+    pump();
+  }
+}
+function startPlay(item){
+  const s = SAMPLES[item.slug];
+  currentItem = item; playing = true;
+  document.querySelectorAll('button[data-key]').forEach(b=>b.classList.toggle('playing', b.dataset.key===item.slug));
+  nowEl.textContent = "再生中："+s.text;
+  player.src = s.src;
+  let started = false;
+  const onPlaying = ()=>{ started = true; player.removeEventListener('playing', onPlaying); log(item.why+"："+s.text+(item.attempts>0 ? "（"+(item.attempts+1)+"回目で鳴ったのだ）" : "")); };
+  player.addEventListener('playing', onPlaying);
+  player.play().catch(e=>{ log("再生できませんでした："+s.text+" / "+e.name); scheduleRetry(item); });
+  setTimeout(()=>{ if(currentItem===item && !started && player.paused){ log("再生が始まらなかったのだ（ナビなど他の音に取られたかも）："+s.text); scheduleRetry(item); } }, 2500);
+}
+function pump(){
+  if(playing || playQueue.length===0) return;
+  startPlay(playQueue.shift());
+}
+player.addEventListener('ended', ()=>{ playing=false; currentItem=null; clearHighlight(); nowEl.textContent="待機中なのだ"; pump(); });
+player.addEventListener('error', ()=>{ if(currentItem){ log("再生エラーなのだ"); scheduleRetry(currentItem); } });
+player.addEventListener('pause', ()=>{
+  if(currentItem && !intentionalStop && player.currentTime > 0 && player.duration && player.currentTime < player.duration - 0.3){
+    log("途中で止められたのだ。他の音声に割り込まれたみたいなのだ");
+    scheduleRetry(currentItem);
+  }
+});
+setInterval(()=>{ if(enabled && keep.paused && !intentionalStop){ keep.play().catch(()=>{}); } }, 5000);
+const cats = [];
+Object.values(SAMPLES).forEach(s=>{ if(!cats.includes(s.cat)) cats.push(s.cat); });
+const sec = document.getElementById('sections');
+cats.forEach(cat=>{
+  const h=document.createElement('h2'); h.textContent=cat; sec.appendChild(h);
+  const g=document.createElement('div'); g.className='grid';
+  Object.keys(SAMPLES).filter(k=>SAMPLES[k].cat===cat).sort((a,b)=>SAMPLES[a].idx-SAMPLES[b].idx).forEach(k=>{
+    const b=document.createElement('button'); b.textContent=SAMPLES[k].text; b.dataset.key=k;
+    b.addEventListener('click', ()=>{ enabled=true; enqueue(k, "タップ再生"); });
+    g.appendChild(b);
+  });
+  sec.appendChild(g);
+});
+document.getElementById('enableBtn').addEventListener('click', ()=>{
+  enabled = true; intentionalStop = false;
+  document.getElementById('status').textContent = "音が有効になったのだ。合図が来たら自動で鳴るのだ。このまま別アプリに切り替えて大丈夫なのだ。";
+  keep.play().then(()=>log("無音の居座り再生を開始したのだ")).catch(e=>log("居座り再生は失敗したのだ："+e.name));
+  enqueue("ryoukai", "有効化の確認再生");
+});
+document.getElementById('stopBtn').addEventListener('click', ()=>{ intentionalStop=true; currentItem=null; player.pause(); keep.pause(); playQueue.length=0; playing=false; nowEl.textContent="止めたのだ"; log("止めたのだ"); });
+
+const SHEET_ID = "__SHEET_ID__";
+const SHEET_NAME = encodeURIComponent("シート1");
+let lastSeq = null, pollCount = 0, failCount = 0, inFlight = false, lastPollAt = 0;
+function setConn(){
+  document.getElementById('conn').textContent = "合図を監視中なのだ（確認 "+pollCount+" 回／失敗 "+failCount+" 回）";
+}
+window.google = { visualization: { Query: { setResponse: function(resp){
+  inFlight = false;
+  try{
+    const rows = resp.table.rows;
+    const c = rows[1].c;
+    const seq = parseInt(c[0].v, 10);
+    const slug = (c[1] && c[1].v) ? String(c[1].v) : "";
+    const updated = (c[2] && c[2].v) ? String(c[2].v) : "";
+    pollCount++;
+    document.getElementById('lamp').classList.add('on');
+    setConn();
+    if(lastSeq === null){
+      lastSeq = seq;
+      const ts = Date.parse(updated.replace(" ", "T"));
+      if(slug && ts && (Date.now() - ts) < 120000){
+        log("開く直前に届いていた合図なのだ：" + slug);
+        if(enabled) enqueue(slug, "プッシュ再生"); else log("まだ音が有効になっていないので鳴らさなかったのだ");
+      } else {
+        log("合図の監視を始めたのだ（現在の番号は "+seq+" なのだ）");
+      }
+      return;
+    }
+    if(seq > lastSeq){
+      lastSeq = seq;
+      log("合図が届いたのだ：" + slug);
+      if(!slug) return;
+      if(enabled) enqueue(slug, "プッシュ再生");
+      else log("まだ音が有効になっていないので鳴らさなかったのだ");
+    }
+  }catch(e){ failCount++; setConn(); log("合図の読み取りで困ったのだ：" + e.message); }
+}}}};
+function doPoll(why){
+  if(inFlight) return;
+  inFlight = true; lastPollAt = Date.now();
+  const s = document.createElement('script');
+  s.src = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?sheet=" + SHEET_NAME + "&range=A1:C2&_=" + Date.now();
+  s.onerror = ()=>{ inFlight=false; failCount++; setConn(); log("合図を取りに行けなかったのだ"); s.remove(); };
+  s.onload = ()=>{ s.remove(); };
+  document.body.appendChild(s);
+  setTimeout(()=>{ if(inFlight){ inFlight=false; failCount++; setConn(); log("合図の確認が時間切れだったのだ"); } }, 10000);
+}
+setInterval(()=>doPoll("timer"), 3000);
+keep.addEventListener('timeupdate', ()=>{ if(Date.now() - lastPollAt > 2500) doPoll("audio-clock"); });
+document.getElementById('checkBtn').addEventListener('click', ()=>{ log("手動で合図を確認するのだ"); doPoll("manual"); });
+if(/; wv\)/.test(navigator.userAgent)){ document.getElementById('uaWarn').textContent = "警告なのだ：いまアプリ内プレビューで開いているみたいなのだ。このままでは声は出ないのだ。ダウンロードしてChromeで開き直してほしいのだ。"; }
+doPoll("start");
+
+document.addEventListener('visibilitychange', ()=>{ log(document.hidden ? "ページが背面に回ったのだ" : "ページが前面に戻ったのだ"); if(!document.hidden) doPoll("foreground"); });
+log("待機ページを読み込んだのだ");
+</script></div></body></html>
