@@ -25,7 +25,7 @@ h2{font-size:16px;margin:18px 0 10px}
 <div class="card">
 <p style="margin:0 0 10px"><span class="lamp" id="lamp"></span><span id="conn">接続中…</span></p>
 <button class="primary" id="enableBtn">音を有効にする（最初に1回だけタップ）</button>
-<p class="sub" id="status">有効化すると確認で「了解なのだ」が鳴るのだ。その後は、モコ太郎から合図が届くたびに、対応するフレーズが自動で鳴るのだ。このページは開いたまま、別アプリに切り替えて大丈夫なのだ。</p>
+<p class="sub" id="status">有効化すると確認で「了解なのだ」が鳴るのだ。その後は、AIアシスタントから合図が届くたびに、対応するフレーズが自動で鳴るのだ。このページは開いたまま、別アプリに切り替えて大丈夫なのだ。</p>
 <p id="now">待機中なのだ</p>
 <button id="checkBtn" style="width:100%;margin-bottom:8px">今すぐ合図を確認する</button>
 <button id="stopBtn" style="width:100%">止める</button>
@@ -113,7 +113,6 @@ document.getElementById('enableBtn').addEventListener('click', ()=>{
 document.getElementById('stopBtn').addEventListener('click', ()=>{ intentionalStop=true; currentItem=null; player.pause(); keep.pause(); playQueue.length=0; playing=false; nowEl.textContent="止めたのだ"; log("止めたのだ"); });
 
 const SHEET_ID = "__SHEET_ID__";
-const SHEET_NAME = encodeURIComponent("シート1");
 let lastSeq = null, pollCount = 0, failCount = 0, inFlight = false, lastPollAt = 0;
 function setConn(){
   document.getElementById('conn').textContent = "合図を監視中なのだ（確認 "+pollCount+" 回／失敗 "+failCount+" 回）";
@@ -153,7 +152,7 @@ function doPoll(why){
   if(inFlight) return;
   inFlight = true; lastPollAt = Date.now();
   const s = document.createElement('script');
-  s.src = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?sheet=" + SHEET_NAME + "&range=A1:C2&_=" + Date.now();
+  s.src = "https://docs.google.com/spreadsheets/d/" + SHEET_ID + "/gviz/tq?gid=0&headers=0&range=A1:C2&_=" + Date.now();
   s.onerror = ()=>{ inFlight=false; failCount++; setConn(); log("合図を取りに行けなかったのだ"); s.remove(); };
   s.onload = ()=>{ s.remove(); };
   document.body.appendChild(s);
