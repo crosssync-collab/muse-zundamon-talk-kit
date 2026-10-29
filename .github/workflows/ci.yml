@@ -22,4 +22,4 @@ jobs:
           grep -q "gid=0&headers=0" page/standby_template.html
       - name: No private names in public files
         run: |
-          ! grep -rn "モコ太郎" --exclude-dir=.git . || exit 1
+          ! grep -rn "モコ太郎" --exclude-dir=.git --exclude=ci.yml . || exit 1
