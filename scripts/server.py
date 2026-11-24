@@ -6,7 +6,7 @@ Muse pushes a phrase slug (e.g. "ryoukai") via POST /push?key=SECRET
 and every connected page plays the matching VOICEVOX sample.
 Samples are served from the samples-voicevox folder.
 """
-import json, os, pathlib, queue, secrets, threading, time
+import collections, json, os, pathlib, queue, secrets, threading, time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOME = pathlib.Path.home()
@@ -33,13 +33,24 @@ FILES = {v["file"] for v in SAMPLES.values()}
 clients = []
 clients_lock = threading.Lock()
 
+# Every pushed cue gets a sequence number so a reconnected page can
+# recover cues it missed: the server keeps the most recent events and
+# replays the ones after the client's Last-Event-ID, and /state lets
+# the page check the latest cue explicitly.
+event_lock = threading.Lock()
+event_seq = 0
+last_event = {"seq": 0, "slug": None, "ts": 0}
+recent_events = collections.deque(maxlen=50)
+
+DIAG_FILE = WORKDIR/"diag.log"
+diag_lock = threading.Lock()
+
 def broadcast(obj):
-    data = json.dumps(obj, ensure_ascii=False)
     with clients_lock:
         dead = []
         for q in clients:
             try:
-                q.put_nowait(data)
+                q.put_nowait(obj)
             except queue.Full:
                 dead.append(q)
         for q in dead:
@@ -98,10 +109,25 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 self.wfile.write(b": connected\n\n")
                 self.wfile.flush()
+                # Replay cues the client missed while disconnected.
+                # EventSource sends Last-Event-ID automatically on
+                # reconnect when earlier events carried an id: field.
+                last_id = 0
+                try:
+                    last_id = int(self.headers.get("Last-Event-ID") or 0)
+                except ValueError:
+                    last_id = 0
+                if last_id:
+                    with event_lock:
+                        missed = [e for e in recent_events if e["seq"] > last_id]
+                    for e in missed:
+                        self.wfile.write(f"id: {e['seq']}\ndata: {json.dumps(e, ensure_ascii=False)}\n\n".encode())
+                    if missed:
+                        self.wfile.flush()
                 while True:
                     try:
-                        data = q.get(timeout=20)
-                        self.wfile.write(f"data: {data}\n\n".encode())
+                        evt = q.get(timeout=20)
+                        self.wfile.write(f"id: {evt['seq']}\ndata: {json.dumps(evt, ensure_ascii=False)}\n\n".encode())
                     except queue.Empty:
                         self.wfile.write(b": heartbeat\n\n")
                     self.wfile.flush()
@@ -111,6 +137,33 @@ class Handler(BaseHTTPRequestHandler):
                 with clients_lock:
                     if q in clients:
                         clients.remove(q)
+        elif self.path == "/state":
+            with event_lock:
+                body = json.dumps(last_event).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path.startswith("/diag"):
+            from urllib.parse import urlparse, parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            if qs.get("key", [""])[0] != PUSH_KEY:
+                self.send_error(403)
+                return
+            try:
+                n = max(1, min(2000, int(qs.get("n", ["200"])[0])))
+            except ValueError:
+                n = 200
+            lines = []
+            if DIAG_FILE.exists():
+                lines = DIAG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+            body = ("\n".join(lines) + ("\n" if lines else "")).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
         elif self.path == "/health":
             with clients_lock:
                 n = len(clients)
@@ -140,14 +193,46 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             if slug in SAMPLES:
-                broadcast({"slug": slug})
-                body = json.dumps({"ok": True, "slug": slug}).encode()
+                global event_seq
+                with event_lock:
+                    event_seq += 1
+                    evt = {"slug": slug, "seq": event_seq, "ts": time.time()}
+                    last_event.update(evt)
+                    recent_events.append(evt)
+                broadcast(evt)
+                body = json.dumps({"ok": True, "slug": slug, "seq": evt["seq"]}).encode()
                 self.send_response(200)
             else:
                 body = json.dumps({"ok": False, "error": "unknown slug", "slug": slug}).encode()
                 self.send_response(400)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        elif self.path == "/diag":
+            length = int(self.headers.get("Content-Length", 0))
+            if length > 16384:
+                self.send_error(413)
+                return
+            raw = self.rfile.read(length).decode("utf-8", "replace").strip()
+            rec = {"srv_ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "raw": raw}
+            try:
+                obj = json.loads(raw)
+                if isinstance(obj, dict):
+                    rec = {"srv_ts": rec["srv_ts"], **obj}
+            except Exception:
+                pass
+            with diag_lock:
+                with DIAG_FILE.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                if DIAG_FILE.stat().st_size > 1_000_000:
+                    kept = DIAG_FILE.read_text(encoding="utf-8", errors="replace").splitlines()[-500:]
+                    DIAG_FILE.write_text("\n".join(kept) + "\n", encoding="utf-8")
+            body = json.dumps({"ok": True}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
         else:

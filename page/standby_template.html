@@ -46,6 +46,39 @@ let currentItem = null;
 let intentionalStop = false;
 const playQueue = [];
 function log(m){ const t=new Date().toLocaleTimeString('ja-JP'); logEl.textContent="["+t+"] "+m+"\n"+logEl.textContent; }
+const DIAG_URL = "__DIAG_URL__";
+function diag(ev, detail){
+  if(!DIAG_URL) return;
+  const body = JSON.stringify({t:new Date().toISOString(), ev:ev, detail:detail||"", hidden:document.hidden, enabled:enabled});
+  try{
+    if(navigator.sendBeacon && navigator.sendBeacon(DIAG_URL, new Blob([body],{type:"text/plain"}))) return;
+    fetch(DIAG_URL, {method:"POST", body:body, headers:{"Content-Type":"text/plain"}, keepalive:true}).catch(()=>{});
+  }catch(e){}
+}
+function setupMediaSession(){
+  if(!("mediaSession" in navigator)) return;
+  try{
+    navigator.mediaSession.metadata = new MediaMetadata({title:"ずんだもん待機中", artist:"VOICEVOX:ずんだもん", album:"ずんだもん待機ページ"});
+    navigator.mediaSession.playbackState = "playing";
+    const keepPlaying = ()=>{ if(enabled && !intentionalStop) keep.play().catch(()=>{}); };
+    navigator.mediaSession.setActionHandler("play", keepPlaying);
+    navigator.mediaSession.setActionHandler("pause", keepPlaying);
+  }catch(e){ log("メディアセッションの設定で困ったのだ："+e.message); }
+}
+let resumeTimes = [], resumeCapped = false;
+function resumeKeepalive(why){
+  if(!enabled || intentionalStop || !keep.paused) return;
+  const now = Date.now(); resumeTimes = resumeTimes.filter(t=> now - t < 600000);
+  if(resumeTimes.length >= 6){
+    if(!resumeCapped){ resumeCapped = true; log("他のアプリの音を邪魔しないよう、自動での鳴らし直しを止めたのだ。また鳴らしたくなったら有効化ボタンを押してほしいのだ"); diag("resume-capped", why); }
+    return;
+  }
+  resumeTimes.push(now);
+  log("居座り再生を再開するのだ（"+why+"）");
+  diag("keepalive-resume", why);
+  keep.play().catch(e=>{ log("居座り再生の再開に失敗したのだ："+e.name); diag("keepalive-resume-failed", why+" "+e.name); });
+}
+let lastAliveDiag = 0;
 function enqueue(slug, why){
   if(!SAMPLES[slug]){ log("知らない合図だったのだ："+slug); return; }
   playQueue.push({slug:slug, why:why, attempts:0});
@@ -90,12 +123,14 @@ player.addEventListener('pause', ()=>{
     scheduleRetry(currentItem);
   }
 });
-let resumeTimes = [], resumeCapped = false;
-setInterval(()=>{ if(enabled && keep.paused && !intentionalStop){
-  const now = Date.now(); resumeTimes = resumeTimes.filter(t=> now - t < 600000);
-  if(resumeTimes.length >= 6){ if(!resumeCapped){ resumeCapped = true; log("他のアプリの音を邪魔しないよう、自動での鳴らし直しを止めたのだ。また鳴らしたくなったら有効化ボタンを押してほしいのだ"); } return; }
-  resumeTimes.push(now); keep.play().catch(()=>{});
-} }, 5000);
+setInterval(()=>resumeKeepalive("timer"), 5000);
+keep.addEventListener('pause', ()=>{
+  if(enabled && !intentionalStop){
+    log("居座り再生が止められたのだ");
+    diag("keepalive-paused", "");
+    setTimeout(()=>resumeKeepalive("pause-event"), 1500);
+  }
+});
 const cats = [];
 Object.values(SAMPLES).forEach(s=>{ if(!cats.includes(s.cat)) cats.push(s.cat); });
 const sec = document.getElementById('sections');
@@ -111,11 +146,14 @@ cats.forEach(cat=>{
 });
 document.getElementById('enableBtn').addEventListener('click', ()=>{
   enabled = true; intentionalStop = false;
+  resumeTimes = []; resumeCapped = false;
+  setupMediaSession();
+  diag("enabled", "");
   document.getElementById('status').textContent = "音が有効になったのだ。合図が来たら自動で鳴るのだ。このまま別アプリに切り替えて大丈夫なのだ。";
-  keep.play().then(()=>log("無音の居座り再生を開始したのだ")).catch(e=>log("居座り再生は失敗したのだ："+e.name));
+  keep.play().then(()=>log("居座り再生を開始したのだ")).catch(e=>log("居座り再生は失敗したのだ："+e.name));
   enqueue("ryoukai", "有効化の確認再生");
 });
-document.getElementById('stopBtn').addEventListener('click', ()=>{ intentionalStop=true; currentItem=null; player.pause(); keep.pause(); playQueue.length=0; playing=false; nowEl.textContent="止めたのだ"; log("止めたのだ"); });
+document.getElementById('stopBtn').addEventListener('click', ()=>{ intentionalStop=true; currentItem=null; player.pause(); keep.pause(); playQueue.length=0; playing=false; nowEl.textContent="止めたのだ"; log("止めたのだ"); if("mediaSession" in navigator){ try{ navigator.mediaSession.playbackState = "paused"; }catch(e){} } diag("stopped", ""); });
 
 const SHEET_ID = "__SHEET_ID__";
 let lastSeq = null, pollCount = 0, failCount = 0, inFlight = false, lastPollAt = 0;
@@ -147,6 +185,7 @@ window.google = { visualization: { Query: { setResponse: function(resp){
     if(seq > lastSeq){
       lastSeq = seq;
       log("合図が届いたのだ：" + slug);
+      diag("cue", slug);
       if(!slug) return;
       if(enabled) enqueue(slug, "プッシュ再生");
       else log("まだ音が有効になっていないので鳴らさなかったのだ");
@@ -164,11 +203,20 @@ function doPoll(why){
   setTimeout(()=>{ if(inFlight){ inFlight=false; failCount++; setConn(); log("合図の確認が時間切れだったのだ"); } }, 10000);
 }
 setInterval(()=>doPoll("timer"), 3000);
-keep.addEventListener('timeupdate', ()=>{ if(Date.now() - lastPollAt > 2500) doPoll("audio-clock"); });
+keep.addEventListener('timeupdate', ()=>{
+  if(Date.now() - lastPollAt > 2500) doPoll("audio-clock");
+  if(Date.now() - lastAliveDiag > 60000){ lastAliveDiag = Date.now(); diag("alive", "ct="+Math.floor(keep.currentTime)); }
+});
 document.getElementById('checkBtn').addEventListener('click', ()=>{ log("手動で合図を確認するのだ"); doPoll("manual"); });
 if(/; wv\)/.test(navigator.userAgent)){ document.getElementById('uaWarn').textContent = "警告なのだ：いまアプリ内プレビューで開いているみたいなのだ。このままでは声は出ないのだ。ダウンロードしてChromeで開き直してほしいのだ。"; }
 doPoll("start");
 
-document.addEventListener('visibilitychange', ()=>{ log(document.hidden ? "ページが背面に回ったのだ" : "ページが前面に戻ったのだ"); if(!document.hidden) doPoll("foreground"); });
+document.addEventListener('visibilitychange', ()=>{
+  log(document.hidden ? "ページが背面に回ったのだ" : "ページが前面に戻ったのだ");
+  diag(document.hidden ? "hidden" : "visible", "");
+  resumeKeepalive(document.hidden ? "hidden" : "visible");
+  if(!document.hidden) doPoll("foreground");
+});
 log("待機ページを読み込んだのだ");
+diag("load", "");
 </script></div></body></html>
